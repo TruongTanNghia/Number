@@ -1,16 +1,17 @@
 """
-Limit Engine for XSMN Lottery Bet Management.
+Limit Engine for Lottery Bet Management (XSMN, XSMB, XSMT).
 
 Implements the dynamic bet limit system:
 1. Base limit decreases by 20 points for each day since the lô last appeared
 2. Consecutive hit penalties reduce the limit further
 3. After 4 consecutive hits, the limit resets
+4. Each region (xsmn, xsmb, xsmt) is tracked independently
 """
 
 from datetime import datetime, timedelta
 from database import (
     get_all_lo_status, get_lo_appeared_on_date, update_lo_status,
-    get_connection, get_lo_status
+    get_connection, get_lo_status, VALID_REGIONS
 )
 
 # ═══════════════════════════════════════════════════════════
@@ -18,20 +19,20 @@ from database import (
 # ═══════════════════════════════════════════════════════════
 
 # Base limit schedule: days_since_last_appeared -> max_limit
+# 0 ngày chưa về (mới ra hôm nay) = 200, mỗi ngày tiếp theo hạ 1 nấc (20đ)
 BASE_LIMIT_SCHEDULE = {
-    0: 200,   # Lô vừa về hôm nay (hoặc ngày 1)
-    1: 200,   # Ngày 1 kể từ lô về
-    2: 180,   # Ngày 2
-    3: 160,   # Ngày 3
-    4: 140,   # Ngày 4
-    5: 120,   # Ngày 5
-    6: 100,   # Ngày 6
-    7: 80,    # Ngày 7
-    8: 60,    # Ngày 8
-    9: 40,    # Ngày 9
-    10: 20,   # Ngày 10
+    0: 200,   # Mới về hôm nay
+    1: 180,   # 1 ngày chưa về
+    2: 160,   # 2 ngày chưa về
+    3: 140,   # 3 ngày chưa về
+    4: 120,   # 4 ngày chưa về
+    5: 100,   # 5 ngày chưa về
+    6: 80,    # 6 ngày chưa về
+    7: 60,    # 7 ngày chưa về
+    8: 40,    # 8 ngày chưa về
+    9: 20,    # 9 ngày chưa về
 }
-MIN_LIMIT = 10  # Ngày 11 trở đi
+MIN_LIMIT = 10  # 10 ngày trở đi
 
 # Consecutive hit penalties
 CONSECUTIVE_LIMITS = {
@@ -42,8 +43,29 @@ CONSECUTIVE_LIMITS = {
 CONSECUTIVE_RESET_AFTER = 4  # Qua 4 ngày → reset
 
 # Betting parameters
-POINT_VALUE = 23000      # 1 điểm = 23,000 VND
-WIN_MULTIPLIER = 80      # Ăn 1 trả 80 (lô 2 số XSMN)
+POINT_VALUE = 23000      # 1 điểm = 23,000 VND (kept for backward compatibility)
+WIN_MULTIPLIER = 80      # Ăn 1 trả 80 (lô 2 số) (kept for backward compatibility)
+
+# ─── Region-specific bet/win pricing (NEW) ─────────────────────────
+# Xác cược (cost to bet 1 điểm 1 con lô) = COST_MULTIPLIER × PRICE_PER_POINT
+# Trúng cược (tiền ăn 1 điểm 1 lần lô về) = PRICE_PER_POINT
+PRICE_PER_POINT = 75              # 1 điểm = 75đ (đơn vị quy đổi)
+COST_MULTIPLIER = {
+    'xsmn': 18,                   # MN: 1 điểm = 18 × 75 = 1.350đ
+    'xsmt': 18,                   # MT: 1 điểm = 18 × 75 = 1.350đ
+    'xsmb': 27,                   # MB: 1 điểm = 27 × 75 = 2.025đ
+}
+
+
+def get_bet_cost(points: int, region: str = 'xsmn') -> int:
+    """Số tiền xác cược (chi phí đánh) cho `points` điểm 1 con lô."""
+    mult = COST_MULTIPLIER.get(region, 18)
+    return points * mult * PRICE_PER_POINT
+
+
+def get_win_amount(points: int, occurrences: int = 1) -> int:
+    """Số tiền trúng cược cho `points` điểm × số lần lô về (`occurrences`)."""
+    return points * PRICE_PER_POINT * occurrences
 
 
 def calculate_base_limit(days_since_last: int) -> int:
@@ -88,16 +110,8 @@ def calculate_effective_limit(days_since_last: int, consecutive_days: int) -> in
     The effective limit is the MINIMUM of:
     - Base limit (based on days since last appearance)
     - Consecutive penalty (if applicable)
-    
-    Args:
-        days_since_last: Days since the lô last appeared
-        consecutive_days: Number of consecutive days it appeared
-        
-    Returns:
-        int: Final effective maximum bet limit
     """
     base_limit = calculate_base_limit(days_since_last)
-    
     consec_limit = calculate_consecutive_limit(consecutive_days)
     
     if consec_limit is not None:
@@ -106,7 +120,7 @@ def calculate_effective_limit(days_since_last: int, consecutive_days: int) -> in
     return base_limit
 
 
-def update_all_lo_status(target_date: str = None):
+def update_all_lo_status(target_date: str = None, region: str = 'xsmn'):
     """
     Update the status and limits for all 100 lô numbers based on results.
     
@@ -115,19 +129,20 @@ def update_all_lo_status(target_date: str = None):
     
     Args:
         target_date: Date string (YYYY-MM-DD) to process. If None, uses today.
+        region: Region to update ('xsmn', 'xsmb', or 'xsmt')
     """
     if target_date is None:
         target_date = datetime.now().strftime('%Y-%m-%d')
 
-    # Get all lô that appeared on this date
-    appeared_today = get_lo_appeared_on_date(target_date)
+    # Get all lô that appeared on this date for this region
+    appeared_today = get_lo_appeared_on_date(target_date, region=region)
     
-    print(f"[LimitEngine] Updating for {target_date}: {len(appeared_today)} lô appeared")
+    print(f"[LimitEngine/{region.upper()}] Updating for {target_date}: {len(appeared_today)} lô appeared")
 
     # Update each of the 100 lô
     for i in range(100):
         lo = f'{i:02d}'
-        current = get_lo_status(lo)
+        current = get_lo_status(lo, region=region)
         
         if current is None:
             # Initialize
@@ -164,66 +179,71 @@ def update_all_lo_status(target_date: str = None):
         new_limit = calculate_effective_limit(days_since, consec)
 
         # Save updated status
-        update_lo_status(lo, last_date, days_since, consec, new_limit)
+        update_lo_status(lo, last_date, days_since, consec, new_limit, region=region)
 
-    print(f"[LimitEngine] All 100 lô updated for {target_date}")
+    print(f"[LimitEngine/{region.upper()}] All 100 lô updated for {target_date}")
 
 
-def recalculate_all_from_history():
+def recalculate_all_from_history(region: str = None):
     """
     Recalculate all lô statuses from scratch using the stored daily history.
     Useful for rebuilding after data changes or initial setup.
+    
+    Args:
+        region: If specified, only recalculate for this region.
+                If None, recalculate for ALL regions.
     """
-    conn = get_connection()
-    cursor = conn.cursor()
+    regions = [region] if region else list(VALID_REGIONS)
     
-    # Get all dates with data, in chronological order
-    cursor.execute('SELECT DISTINCT date FROM lo_daily ORDER BY date ASC')
-    dates = [row['date'] for row in cursor.fetchall()]
-    conn.close()
-    
-    if not dates:
-        print("[LimitEngine] No historical data to recalculate from")
-        return
-    
-    # Reset all lô statuses
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute('''
-        UPDATE lo_status 
-        SET last_appeared_date = NULL, 
-            days_since_last = 0, 
-            consecutive_days = 0, 
-            current_limit = 200
-    ''')
-    conn.commit()
-    conn.close()
-    
-    # Process each date chronologically
-    for date_str in dates:
-        update_all_lo_status(date_str)
-    
-    print(f"[LimitEngine] Recalculated from {len(dates)} days of history")
+    for rgn in regions:
+        conn = get_connection()
+        cursor = conn.cursor()
+        
+        # Get all dates with data for this region
+        cursor.execute('SELECT DISTINCT date FROM lo_daily WHERE region = ? ORDER BY date ASC', (rgn,))
+        dates = [row['date'] for row in cursor.fetchall()]
+        conn.close()
+        
+        if not dates:
+            print(f"[LimitEngine/{rgn.upper()}] No historical data to recalculate from")
+            continue
+        
+        # Reset all lô statuses for this region
+        conn = get_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
+            UPDATE lo_status 
+            SET last_appeared_date = NULL, 
+                days_since_last = 0, 
+                consecutive_days = 0, 
+                current_limit = 200
+            WHERE region = ?
+        ''', (rgn,))
+        conn.commit()
+        conn.close()
+        
+        # Process each date chronologically
+        for date_str in dates:
+            update_all_lo_status(date_str, region=rgn)
+        
+        print(f"[LimitEngine/{rgn.upper()}] Recalculated from {len(dates)} days of history")
 
 
-def get_limit_summary():
+def get_limit_summary(region: str = 'xsmn'):
     """
     Get a summary of all 100 lô with their current limits and status.
-    
-    Returns:
-        list of dicts with limit info for each lô
+    Includes per-lô bet cost / potential win for the region.
     """
-    all_status = get_all_lo_status()
+    all_status = get_all_lo_status(region=region)
     summary = []
-    
+
     for status in all_status:
         lo = status['lo_number']
         days = status['days_since_last']
         consec = status['consecutive_days']
         limit = status['current_limit']
         last_date = status['last_appeared_date']
-        
-        # Determine status category
+
         if consec >= 4:
             category = 'hot_streak'
         elif consec >= 2:
@@ -236,7 +256,7 @@ def get_limit_summary():
             category = 'cooling'
         else:
             category = 'cold'
-        
+
         summary.append({
             'lo_number': lo,
             'days_since_last': days,
@@ -246,14 +266,16 @@ def get_limit_summary():
             'category': category,
             'base_limit': calculate_base_limit(days),
             'consecutive_penalty': calculate_consecutive_limit(consec),
+            'bet_cost_vnd': get_bet_cost(limit, region=region),
+            'win_per_hit_vnd': get_win_amount(limit, occurrences=1),
         })
-    
+
     return summary
 
 
-def get_consecutive_los():
-    """Get list of lô numbers currently on consecutive streaks."""
-    all_status = get_all_lo_status()
+def get_consecutive_los(region: str = 'xsmn'):
+    """Get list of lô numbers currently on consecutive streaks for a region."""
+    all_status = get_all_lo_status(region=region)
     consecutive = []
     
     for status in all_status:

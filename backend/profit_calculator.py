@@ -1,230 +1,180 @@
 """
-Profit & Loss Calculator for XSMN Lottery Bet System.
+Profit & Loss Calculator for Lottery Bet System.
+Supports multiple regions (XSMN, XSMB, XSMT).
 
-Calculates total revenue and costs based on bet history,
-simulating P&L over the last 30 days.
+Pricing model (per region):
+- Xác cược (chi phí 1 điểm 1 con) = COST_MULTIPLIER[region] × PRICE_PER_POINT
+  - MN/MT: 18 × 75 = 1.350đ
+  - MB:    27 × 75 = 2.025đ
+- Trúng cược (tiền ăn 1 điểm/1 lần) = PRICE_PER_POINT = 75đ
+  → Win amount mỗi ngày = điểm × 75 × số lần lô về trong ngày.
 """
 
 from datetime import datetime, timedelta
-from database import (
-    get_bet_history, save_bet_record, get_connection,
-    get_lo_appeared_on_date, get_all_lo_status
+from database import get_connection, get_lo_appeared_on_date, get_all_lo_status
+from limit_engine import (
+    PRICE_PER_POINT, COST_MULTIPLIER,
+    get_bet_cost, get_win_amount,
 )
-from limit_engine import POINT_VALUE, WIN_MULTIPLIER
 
 
-def calculate_daily_profit(date_str: str) -> dict:
+# ═══════════════════════════════════════════════════════════
+# DAILY PROFIT — recompute on the fly from limits + lo_daily
+# (does NOT depend on bet_history table; bet_history kept for legacy)
+# ═══════════════════════════════════════════════════════════
+
+def calculate_daily_profit(date_str: str, region: str = 'xsmn') -> dict:
     """
-    Calculate profit/loss for a specific date.
-    
-    For each lô number that was bet on:
-    - If it appeared: WIN = bet_amount × WIN_MULTIPLIER × POINT_VALUE
-    - If it didn't appear: LOSS = -bet_amount × POINT_VALUE
-    
-    Returns:
-        dict with daily P&L breakdown
+    Calculate cost / win / net profit for a date assuming we bet
+    `current_limit` points on every lô (00–99) for that region.
+
+    For each lô:
+      - cost = limit × COST_MULTIPLIER[region] × 75
+      - if appeared `n` times that day → win = limit × 75 × n
+      - profit_per_lo = win - cost
     """
+    cost_mult = COST_MULTIPLIER.get(region, 18)
+
     conn = get_connection()
     cursor = conn.cursor()
-    
-    cursor.execute('''
-        SELECT lo_number, bet_amount, is_win, profit
-        FROM bet_history 
-        WHERE date = ?
-    ''', (date_str,))
-    bets = cursor.fetchall()
+
+    cursor.execute(
+        'SELECT lo_number, current_limit FROM lo_status WHERE region = ?',
+        (region,)
+    )
+    limits = {row['lo_number']: row['current_limit'] for row in cursor.fetchall()}
+
+    cursor.execute(
+        'SELECT lo_number, count FROM lo_daily WHERE date = ? AND region = ?',
+        (date_str, region)
+    )
+    appearances = {row['lo_number']: row['count'] for row in cursor.fetchall()}
     conn.close()
-    
-    total_bet = 0
+
+    if not limits:
+        return _empty_daily(date_str)
+
+    total_cost = 0
     total_win = 0
-    total_loss = 0
     win_count = 0
     lose_count = 0
-    details = []
-    
-    for bet in bets:
-        bet_dict = dict(bet)
-        total_bet += bet_dict['bet_amount']
-        
-        if bet_dict['is_win']:
-            total_win += bet_dict['profit']
+
+    for lo, limit in limits.items():
+        cost = limit * cost_mult * PRICE_PER_POINT
+        total_cost += cost
+
+        n = appearances.get(lo, 0)
+        if n > 0:
+            win = limit * PRICE_PER_POINT * n
+            total_win += win
             win_count += 1
         else:
-            total_loss += abs(bet_dict['profit'])
             lose_count += 1
-        
-        details.append(bet_dict)
-    
-    net_profit = total_win - total_loss
-    
+
+    net = total_win - total_cost
+
     return {
         'date': date_str,
-        'total_bet_points': total_bet,
-        'total_bet_vnd': total_bet * POINT_VALUE,
+        'region': region,
+        'total_bet_vnd': total_cost,
         'total_win_vnd': total_win,
-        'total_loss_vnd': total_loss,
-        'net_profit_vnd': net_profit,
+        'total_loss_vnd': total_cost - total_win if total_cost > total_win else 0,
+        'net_profit_vnd': net,
         'win_count': win_count,
         'lose_count': lose_count,
         'total_bets': win_count + lose_count,
-        'win_rate': (win_count / (win_count + lose_count) * 100) if (win_count + lose_count) > 0 else 0,
-        'details': details,
+        'win_rate': (win_count / 100 * 100) if (win_count + lose_count) > 0 else 0,
     }
 
 
-def calculate_period_profit(days: int = 30) -> dict:
+def _empty_daily(date_str: str) -> dict:
+    return {
+        'date': date_str,
+        'total_bet_vnd': 0,
+        'total_win_vnd': 0,
+        'total_loss_vnd': 0,
+        'net_profit_vnd': 0,
+        'win_count': 0,
+        'lose_count': 0,
+        'total_bets': 0,
+        'win_rate': 0,
+    }
+
+
+def calculate_period_profit(days: int = 30, region: str = 'xsmn') -> dict:
     """
-    Calculate total P&L for the last N days.
-    
-    Returns:
-        dict with period P&L summary and daily breakdown
+    Aggregate profit/loss over the last N days for a region.
+    Skip days that have no data (no lô_daily entries).
     """
+    conn = get_connection()
+    cursor = conn.cursor()
+    cutoff = (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d')
+    cursor.execute(
+        'SELECT DISTINCT date FROM lo_daily WHERE region = ? AND date >= ? ORDER BY date DESC',
+        (region, cutoff)
+    )
+    dates = [row['date'] for row in cursor.fetchall()]
+    conn.close()
+
     daily_results = []
+    total_cost = 0
     total_win = 0
-    total_loss = 0
-    total_bets = 0
     total_wins = 0
     total_losses = 0
-    
-    for i in range(days):
-        date = datetime.now() - timedelta(days=i)
-        date_str = date.strftime('%Y-%m-%d')
-        daily = calculate_daily_profit(date_str)
-        
-        if daily['total_bets'] > 0:
-            daily_results.append(daily)
-            total_win += daily['total_win_vnd']
-            total_loss += daily['total_loss_vnd']
-            total_bets += daily['total_bets']
-            total_wins += daily['win_count']
-            total_losses += daily['lose_count']
-    
-    net = total_win - total_loss
-    
+
+    for date_str in dates:
+        daily = calculate_daily_profit(date_str, region=region)
+        daily_results.append(daily)
+        total_cost += daily['total_bet_vnd']
+        total_win += daily['total_win_vnd']
+        total_wins += daily['win_count']
+        total_losses += daily['lose_count']
+
+    net = total_win - total_cost
+    total_bets = total_wins + total_losses
+
     return {
         'period_days': days,
+        'region': region,
+        'total_bet_vnd': total_cost,
         'total_win_vnd': total_win,
-        'total_loss_vnd': total_loss,
+        'total_loss_vnd': total_cost - total_win if total_cost > total_win else 0,
         'net_profit_vnd': net,
         'total_bets': total_bets,
         'total_wins': total_wins,
         'total_losses': total_losses,
         'win_rate': (total_wins / total_bets * 100) if total_bets > 0 else 0,
-        'roi': (net / (total_loss if total_loss > 0 else 1)) * 100,
-        'daily_breakdown': sorted(daily_results, key=lambda x: x['date'], reverse=True),
+        'roi': (net / total_cost * 100) if total_cost > 0 else 0,
+        'daily_breakdown': daily_results,
     }
 
 
-def simulate_bets_for_date(date_str: str, bet_strategy: str = 'max_limit'):
-    """
-    Simulate betting on all 100 lô for a given date using current limits.
-    
-    Strategy:
-    - 'max_limit': Bet the current limit for each lô
-    - 'fixed': Bet a fixed amount (e.g., 10đ) for each lô  
-    - 'selective': Only bet on lô with limit >= threshold
-    
-    Args:
-        date_str: Date to simulate bets for
-        bet_strategy: Strategy to use
-    """
-    appeared = get_lo_appeared_on_date(date_str)
-    all_status = get_all_lo_status()
-    
-    if not appeared:
-        print(f"[ProfitCalc] No results for {date_str}, skipping simulation")
-        return
-    
-    for status in all_status:
-        lo = status['lo_number']
-        limit = status['current_limit']
-        
-        if bet_strategy == 'max_limit':
-            bet_amount = limit
-        elif bet_strategy == 'fixed':
-            bet_amount = 10
-        elif bet_strategy == 'selective':
-            if limit < 50:
-                continue
-            bet_amount = limit
-        else:
-            bet_amount = limit
-        
-        is_win = lo in appeared
-        
-        if is_win:
-            # Win: bet_amount × WIN_MULTIPLIER × POINT_VALUE
-            profit = bet_amount * WIN_MULTIPLIER * POINT_VALUE
-        else:
-            # Lose: -bet_amount × POINT_VALUE
-            profit = -(bet_amount * POINT_VALUE)
-        
-        save_bet_record(date_str, lo, bet_amount, is_win, profit)
-    
-    print(f"[ProfitCalc] Simulated bets for {date_str}: "
-          f"{len(appeared)} lô appeared out of 100")
+# ═══════════════════════════════════════════════════════════
+# CHART DATA
+# ═══════════════════════════════════════════════════════════
 
-
-def get_lo_profit_breakdown(days: int = 30) -> list:
-    """
-    Get profit breakdown per lô number.
-    
-    Returns:
-        list of dicts with per-lô P&L summary
-    """
-    conn = get_connection()
-    cursor = conn.cursor()
-    cutoff = (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d')
-    
-    cursor.execute('''
-        SELECT 
-            lo_number,
-            SUM(bet_amount) as total_bet,
-            SUM(CASE WHEN is_win = 1 THEN 1 ELSE 0 END) as wins,
-            SUM(CASE WHEN is_win = 0 THEN 1 ELSE 0 END) as losses,
-            SUM(CASE WHEN is_win = 1 THEN profit ELSE 0 END) as total_win,
-            SUM(CASE WHEN is_win = 0 THEN ABS(profit) ELSE 0 END) as total_loss,
-            SUM(profit) as net_profit
-        FROM bet_history
-        WHERE date >= ?
-        GROUP BY lo_number
-        ORDER BY net_profit DESC
-    ''', (cutoff,))
-    
-    rows = cursor.fetchall()
-    conn.close()
-    
-    return [dict(row) for row in rows]
-
-
-def get_profit_chart_data(days: int = 30) -> dict:
-    """
-    Get data formatted for chart visualization.
-    
-    Returns:
-        dict with labels and datasets for Chart.js
-    """
+def get_profit_chart_data(days: int = 30, region: str = 'xsmn') -> dict:
+    """Format chart data for Chart.js (last N days, oldest first)."""
     labels = []
     win_data = []
     loss_data = []
     net_data = []
     cumulative = 0
     cumulative_data = []
-    
+
     for i in range(days - 1, -1, -1):
         date = datetime.now() - timedelta(days=i)
         date_str = date.strftime('%Y-%m-%d')
         display_date = date.strftime('%d/%m')
-        
-        daily = calculate_daily_profit(date_str)
-        
+
+        daily = calculate_daily_profit(date_str, region=region)
         labels.append(display_date)
         win_data.append(daily['total_win_vnd'])
-        loss_data.append(-daily['total_loss_vnd'])
+        loss_data.append(-daily['total_bet_vnd'])  # bet shown as negative
         net_data.append(daily['net_profit_vnd'])
         cumulative += daily['net_profit_vnd']
         cumulative_data.append(cumulative)
-    
+
     return {
         'labels': labels,
         'datasets': {
@@ -236,8 +186,76 @@ def get_profit_chart_data(days: int = 30) -> dict:
     }
 
 
+# ═══════════════════════════════════════════════════════════
+# PER-LÔ BREAKDOWN
+# ═══════════════════════════════════════════════════════════
+
+def get_lo_profit_breakdown(days: int = 30, region: str = 'xsmn') -> list:
+    """
+    Per-lô profit breakdown over the last N days.
+    Uses CURRENT limit as the simulated bet for every day in the window.
+    """
+    cost_mult = COST_MULTIPLIER.get(region, 18)
+    cutoff = (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d')
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute(
+        'SELECT lo_number, current_limit FROM lo_status WHERE region = ? ORDER BY lo_number',
+        (region,)
+    )
+    limits = [(row['lo_number'], row['current_limit']) for row in cursor.fetchall()]
+
+    cursor.execute('''
+        SELECT lo_number, COUNT(*) as appear_days, SUM(count) as total_count
+        FROM lo_daily
+        WHERE region = ? AND date >= ?
+        GROUP BY lo_number
+    ''', (region, cutoff))
+    appearances = {row['lo_number']: dict(row) for row in cursor.fetchall()}
+
+    cursor.execute(
+        'SELECT COUNT(DISTINCT date) as n FROM lo_daily WHERE region = ? AND date >= ?',
+        (region, cutoff)
+    )
+    total_days = cursor.fetchone()['n'] or 0
+    conn.close()
+
+    results = []
+    for lo, limit in limits:
+        appear = appearances.get(lo, {})
+        appear_days = appear.get('appear_days', 0) or 0
+        total_count = appear.get('total_count', 0) or 0
+
+        cost = limit * cost_mult * PRICE_PER_POINT * total_days
+        win = limit * PRICE_PER_POINT * total_count
+        net = win - cost
+
+        results.append({
+            'lo_number': lo,
+            'limit_points': limit,
+            'appear_days': appear_days,
+            'total_appearances': total_count,
+            'total_bet': cost,
+            'total_win': win,
+            'net_profit': net,
+        })
+
+    results.sort(key=lambda r: r['net_profit'], reverse=True)
+    return results
+
+
+# ═══════════════════════════════════════════════════════════
+# LEGACY: simulate_bets_for_date (kept for compatibility)
+# ═══════════════════════════════════════════════════════════
+
+def simulate_bets_for_date(date_str: str, bet_strategy: str = 'max_limit', region: str = 'xsmn'):
+    """No-op: profit now derived directly from lo_status + lo_daily."""
+    print(f"[ProfitCalc/{region.upper()}] simulate_bets_for_date is deprecated (auto-derived now)")
+
+
 def format_vnd(amount: int) -> str:
-    """Format amount as VND currency string."""
     if amount >= 0:
         return f"+{amount:,.0f}đ"
     return f"{amount:,.0f}đ"

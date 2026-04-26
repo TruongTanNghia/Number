@@ -3,13 +3,13 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>XSMN Limit Manager - Quản Lý Hạn Mức Lô Miền Nam</title>
-    <meta name="description" content="Hệ thống quản lý hạn mức lô đề Xổ Số Miền Nam - Theo dõi 100 lô, hạn mức giảm dần, thống kê thu/bù">
+    <title>Lottery Limit Manager - Quản Lý Hạn Mức Lô 3 Miền</title>
+    <meta name="description" content="Hệ thống quản lý hạn mức lô đề Xổ Số 3 Miền - Miền Nam, Miền Bắc, Miền Trung">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-    <link rel="stylesheet" href="/static/style.css">
+    <link rel="stylesheet" href="/static/style.css?v=20260426b">
 </head>
 <body>
     <!-- ═══════ HEADER ═══════ -->
@@ -18,8 +18,8 @@
             <div class="logo-container">
                 <div class="logo-icon">🎯</div>
                 <div class="logo-text">
-                    <h1>XSMN Limit Manager</h1>
-                    <p class="logo-subtitle">Quản Lý Hạn Mức Lô Miền Nam</p>
+                    <h1>Lottery Limit Manager</h1>
+                    <p class="logo-subtitle">Quản Lý Hạn Mức Lô 3 Miền</p>
                 </div>
             </div>
         </div>
@@ -47,8 +47,39 @@
         </div>
     </header>
 
+    <!-- ═══════ REGION + VIEW TABS ═══════ -->
+    <nav class="region-tabs" id="region-tabs">
+        <div class="tab-group">
+            <button class="region-tab active" data-region="xsmn" onclick="switchRegion('xsmn')">
+                <span class="region-tab-icon">🌴</span>
+                <span class="region-tab-label">Miền Nam</span>
+                <span class="region-tab-badge" id="tab-badge-xsmn"></span>
+            </button>
+            <button class="region-tab" data-region="xsmb" onclick="switchRegion('xsmb')">
+                <span class="region-tab-icon">🏯</span>
+                <span class="region-tab-label">Miền Bắc</span>
+                <span class="region-tab-badge" id="tab-badge-xsmb"></span>
+            </button>
+            <button class="region-tab" data-region="xsmt" onclick="switchRegion('xsmt')">
+                <span class="region-tab-icon">⛩️</span>
+                <span class="region-tab-label">Miền Trung</span>
+                <span class="region-tab-badge" id="tab-badge-xsmt"></span>
+            </button>
+        </div>
+        <div class="view-toggle">
+            <button class="view-btn active" data-view="dashboard" onclick="switchView('dashboard')">
+                📊 Dashboard
+            </button>
+            <button class="view-btn" data-view="prediction" onclick="switchView('prediction')">
+                🔮 Dự Đoán
+            </button>
+        </div>
+    </nav>
+
     <!-- ═══════ MAIN CONTENT ═══════ -->
     <main class="main-content">
+      <!-- ═══════ DASHBOARD VIEW ═══════ -->
+      <div id="view-dashboard" class="view-pane">
         <!-- ═══════ TOP STATS BAR ═══════ -->
         <section class="stats-bar" id="stats-bar">
             <div class="stat-card stat-card--profit" id="stat-total-profit">
@@ -86,7 +117,7 @@
             <!-- ═══════ LEFT: 100 LÔ GRID ═══════ -->
             <section class="panel panel--lo-grid" id="panel-lo-grid">
                 <div class="panel-header">
-                    <h2>📊 Bảng Hạn Mức 100 Lô (00-99)</h2>
+                    <h2>📊 Bảng Hạn Mức 100 Lô (00-99) — <span id="grid-region-label">Miền Nam</span></h2>
                     <div class="panel-controls">
                         <div class="legend">
                             <span class="legend-item legend-item--200">200đ</span>
@@ -102,12 +133,12 @@
                 </div>
                 <!-- ═══════ LIMIT SCHEDULE REFERENCE ═══════ -->
                 <div class="limit-schedule">
-                    <h3>📋 Bảng Hạn Mức Theo Ngày</h3>
+                    <h3>📋 Bảng Hạn Mức Theo Số Ngày Chưa Về</h3>
                     <div class="schedule-table">
                         <div class="schedule-row schedule-header">
-                            <span>Ngày</span><span>1</span><span>2</span><span>3</span>
-                            <span>4</span><span>5</span><span>6</span><span>7</span>
-                            <span>8</span><span>9</span><span>10</span><span>11+</span>
+                            <span>Ngày</span><span>0</span><span>1</span><span>2</span>
+                            <span>3</span><span>4</span><span>5</span><span>6</span>
+                            <span>7</span><span>8</span><span>9</span><span>10+</span>
                         </div>
                         <div class="schedule-row">
                             <span>Max</span><span>200</span><span>180</span><span>160</span>
@@ -116,8 +147,17 @@
                         </div>
                     </div>
                     <div class="schedule-note">
-                        <strong>Lô về liên tiếp:</strong> 
+                        <strong>Lô về liên tiếp:</strong>
                         2 ngày → 150đ | 3 ngày → 100đ | 4 ngày → 50đ | >4 ngày → reset
+                    </div>
+                </div>
+
+                <!-- ═══════ PRICING / MONEY INFO ═══════ -->
+                <div class="pricing-card">
+                    <h3>💵 Bảng Tính Tiền Cược</h3>
+                    <div id="pricing-info" class="pricing-info"></div>
+                    <div class="pricing-note">
+                        Hover vào ô lô bất kỳ trên bảng để xem số tiền xác cược / trúng cược cụ thể.
                     </div>
                 </div>
             </section>
@@ -161,6 +201,124 @@
                 </section>
             </aside>
         </div>
+      </div>
+      <!-- end view-dashboard -->
+
+      <!-- ═══════ PREDICTION VIEW ═══════ -->
+      <div id="view-prediction" class="view-pane" style="display: none;">
+        <section class="stats-bar" id="prediction-stats">
+            <div class="stat-card">
+                <div class="stat-card-icon">📚</div>
+                <div class="stat-card-content">
+                    <span class="stat-card-label">Dữ liệu phân tích</span>
+                    <span class="stat-card-value" id="pred-days">--</span>
+                </div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-card-icon">🥇</div>
+                <div class="stat-card-content">
+                    <span class="stat-card-label">Lô khả năng cao nhất</span>
+                    <span class="stat-card-value" id="pred-top-lo" style="color: #34d399;">--</span>
+                </div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-card-icon">📈</div>
+                <div class="stat-card-content">
+                    <span class="stat-card-label">Lift so với uniform (1%)</span>
+                    <span class="stat-card-value" id="pred-top-lift" style="color: #60a5fa;">--</span>
+                </div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-card-icon">🎯</div>
+                <div class="stat-card-content">
+                    <span class="stat-card-label">Confidence trung bình</span>
+                    <span class="stat-card-value" id="pred-avg-conf" style="color: #f59e0b;">--</span>
+                </div>
+            </div>
+        </section>
+
+        <div class="content-grid">
+            <section class="panel">
+                <div class="panel-header">
+                    <h2>🔮 Top 20 Lô Khả Năng Cao Nhất — <span id="pred-region-label">Miền Nam</span></h2>
+                    <div class="panel-controls">
+                        <select id="pred-window" class="pred-select" onchange="loadPredictions()">
+                            <option value="30">30 ngày</option>
+                            <option value="60" selected>60 ngày</option>
+                            <option value="90">90 ngày</option>
+                            <option value="180">180 ngày</option>
+                        </select>
+                    </div>
+                </div>
+                <div id="pred-top-list" class="pred-top-list">
+                    <div class="empty-state">Đang tính toán...</div>
+                </div>
+            </section>
+
+            <aside class="sidebar">
+                <section class="panel">
+                    <div class="panel-header">
+                        <h2>🧠 Mô Hình Kết Hợp</h2>
+                    </div>
+                    <div id="pred-models" class="pred-models"></div>
+                </section>
+
+                <section class="panel">
+                    <div class="panel-header">
+                        <h2>📐 Phương Pháp Luận</h2>
+                    </div>
+                    <div class="pred-methodology">
+                        <p><strong>1. Frequency:</strong> tần suất lô về toàn bộ window.</p>
+                        <p><strong>2. Recency:</strong> EWMA, half-life 7 ngày.</p>
+                        <p><strong>3. Poisson Gap:</strong> P(về | đã chờ N ngày).</p>
+                        <p><strong>4. Markov:</strong> P(lô X | lô set hôm qua).</p>
+                        <p><strong>5. Temperature:</strong> z-score nóng/lạnh.</p>
+                        <p><strong>6. Pair:</strong> co-occurrence với lô hôm qua.</p>
+                        <p><strong>7. Streak:</strong> boost theo chuỗi liên tiếp.</p>
+                        <p class="methodology-note">
+                            Final = weighted ensemble → softmax (T=0.15).
+                            Lift = top probability ÷ uniform (1%).
+                        </p>
+                    </div>
+                </section>
+            </aside>
+        </div>
+
+        <section class="panel" style="margin-top: 24px;">
+            <div class="panel-header">
+                <h2>🗺️ Bản Đồ Xác Suất 100 Lô (heatmap)</h2>
+            </div>
+            <div id="pred-heatmap" class="pred-heatmap"></div>
+        </section>
+
+        <section class="panel" style="margin-top: 24px;">
+            <div class="panel-header">
+                <h2>📊 Bảng Chi Tiết Toàn Bộ 100 Lô</h2>
+            </div>
+            <div class="pred-table-wrapper">
+                <table class="pred-table" id="pred-table">
+                    <thead>
+                        <tr>
+                            <th>#</th>
+                            <th>Lô</th>
+                            <th>Xác suất</th>
+                            <th>Composite</th>
+                            <th>Conf.</th>
+                            <th>Freq</th>
+                            <th>Recency</th>
+                            <th>Poisson</th>
+                            <th>Markov</th>
+                            <th>Temp</th>
+                            <th>Pair</th>
+                            <th>Streak</th>
+                        </tr>
+                    </thead>
+                    <tbody id="pred-table-body"></tbody>
+                </table>
+            </div>
+        </section>
+      </div>
+      <!-- end view-prediction -->
     </main>
 
     <!-- ═══════ LÔ DETAIL MODAL ═══════ -->
@@ -183,11 +341,25 @@
                 <h2>🔄 Đang Cập Nhật Dữ Liệu</h2>
             </div>
             <div class="modal-body">
+                <div class="scrape-region-status" id="scrape-region-status">
+                    <div class="scrape-region-item">
+                        <span>🌴 Miền Nam</span>
+                        <span class="scrape-region-dot" id="scrape-dot-xsmn">⏳</span>
+                    </div>
+                    <div class="scrape-region-item">
+                        <span>🏯 Miền Bắc</span>
+                        <span class="scrape-region-dot" id="scrape-dot-xsmb">⏳</span>
+                    </div>
+                    <div class="scrape-region-item">
+                        <span>⛩️ Miền Trung</span>
+                        <span class="scrape-region-dot" id="scrape-dot-xsmt">⏳</span>
+                    </div>
+                </div>
                 <div class="progress-container">
                     <div class="progress-bar" id="scrape-progress"></div>
                 </div>
-                <p id="scrape-status-text">Đang crawl dữ liệu từ xsmn.mobi...</p>
-                <p class="scrape-note">Quá trình này có thể mất 1-2 phút cho 30 ngày dữ liệu.</p>
+                <p id="scrape-status-text">Đang crawl dữ liệu 3 miền...</p>
+                <p class="scrape-note">Quá trình này có thể mất 3-5 phút cho 30 ngày × 3 miền.</p>
             </div>
         </div>
     </div>
@@ -195,6 +367,6 @@
     <!-- ═══════ TOAST NOTIFICATIONS ═══════ -->
     <div class="toast-container" id="toast-container"></div>
 
-    <script src="/static/app.js"></script>
+    <script src="/static/app.js?v=20260426b"></script>
 </body>
 </html>
